@@ -2,13 +2,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { mkdir, writeFile, unlink, stat } from 'fs/promises';
+import { mkdir, writeFile, unlink, stat, readFile } from 'fs/promises';
 import { join } from 'path';
-import { execFile } from 'child_process';
+import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
 import { z } from 'zod';
 
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 // Task storage (in-memory for single instance, use Redis/DB for multi-instance)
 const tasks = new Map();
@@ -17,11 +18,17 @@ const tasks = new Map();
 const COMPOSITIONS_DIR = process.env.COMPOSITIONS_DIR || join(process.cwd(), 'compositions');
 const OUTPUTS_DIR = process.env.OUTPUTS_DIR || join(process.cwd(), 'outputs');
 const TEMPLATES_DIR = process.env.TEMPLATES_DIR || join(process.cwd(), 'templates');
+const NARRATION_DIR = process.env.NARRATION_DIR || join(process.cwd(), 'narrations');
+
+// ElevenLabs
+const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY;
+const ELEVEN_LABS_BASE_URL = 'https://api.elevenlabs.io/v1';
 
 // Ensure directories exist
 await mkdir(COMPOSITIONS_DIR, { recursive: true });
 await mkdir(OUTPUTS_DIR, { recursive: true });
 await mkdir(TEMPLATES_DIR, { recursive: true });
+await mkdir(NARRATION_DIR, { recursive: true });
 
 // API Key authentication
 const API_KEY = process.env.HYPER_VIDEO_API_KEY;
@@ -114,6 +121,10 @@ Sizes: 1920x1080 (landscape), 1080x1920 (portrait/vertical), 1080x1080 (square).
         response.download_url = task.downloadUrl;
         response.duration_seconds = task.renderDuration;
         response.file_size = task.fileSize;
+        if (task.narrationStatus) {
+          response.narration_status = task.narrationStatus;
+          if (task.narrationError) response.narration_error = task.narrationError;
+        }
       } else if (task.status === 'failed') {
         response.error = task.error;
       }
@@ -139,6 +150,58 @@ Sizes: 1920x1080 (landscape), 1080x1920 (portrait/vertical), 1080x1080 (square).
 
       return {
         content: [{ type: 'text', text: JSON.stringify({ templates }, null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    'generate_narration',
+    `Generate narration audio from text using ElevenLabs text-to-speech, then mux it onto an existing video. Returns the updated video download URL when done.
+
+Available voices: "rachel" (female, warm, conversational), "drew" (male, calm, professional), "clyde" (male, deep, authoritative), "bella" (female, bright, friendly). Default: "rachel".`,
+    {
+      task_id: z.string().describe('The task ID of a completed video to add narration to'),
+      text: z.string().describe('The narration script text to convert to speech'),
+      voice: z.enum(['rachel', 'drew', 'clyde', 'bella']).default('rachel').describe('Voice to use for narration (default: rachel)'),
+    },
+    async ({ task_id, text, voice = 'rachel' }) => {
+      if (!ELEVEN_LABS_API_KEY) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'ELEVEN_LABS_API_KEY not configured. Set the environment variable to enable narration.' }) }],
+          isError: true,
+        };
+      }
+
+      const task = tasks.get(task_id);
+      if (!task) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'Task not found' }) }],
+          isError: true,
+        };
+      }
+      if (task.status !== 'done') {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: `Task is ${task.status}, not done. Wait for the video to finish rendering first.` }) }],
+          isError: true,
+        };
+      }
+
+      const narrationId = uuidv4();
+      task.narrationStatus = 'generating';
+
+      processNarration(task_id, narrationId, text, voice).catch(err => {
+        const t = tasks.get(task_id);
+        if (t) {
+          t.narrationStatus = 'failed';
+          t.narrationError = err.message;
+        }
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ task_id, narration_id: narrationId, narration_status: 'generating', voice }, null, 2),
+        }],
       };
     }
   );
@@ -268,13 +331,82 @@ async function renderVideo(inputPath, outputPath, duration, width, height) {
   return { stdout, stderr };
 }
 
+// ElevenLabs voice IDs
+const VOICE_IDS = {
+  rachel: '21m00Tcm4TlvDq8ikWAM', // Rachel - warm, conversational
+  drew: '2EpgWj0sAnM8pE0GsxYs',   // Drew - calm, professional
+  clyde: '2EpgWj0sAnM8pE0GsxYs',  // Clyde - deep, authoritative (using Drew as fallback)
+  bella: 'EXAVITQu4ms4iquZ1x9D',   // Bella - bright, friendly
+};
+
+async function generateNarrationAudio(text, voice) {
+  const voiceId = VOICE_IDS[voice] || VOICE_IDS.rachel;
+  const response = await fetch(`${ELEVEN_LABS_BASE_URL}/text-to-speech/${voiceId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'xi-api-key': ELEVEN_LABS_API_KEY,
+      'Accept': 'audio/mpeg',
+    },
+    body: JSON.stringify({
+      text,
+      model_id: 'eleven_multilingual_v2',
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`ElevenLabs API error: ${response.status} ${errorBody}`);
+  }
+
+  const audioBuffer = Buffer.from(await response.arrayBuffer());
+  const audioPath = join(NARRATION_DIR, `${uuidv4()}.mp3`);
+  await writeFile(audioPath, audioBuffer);
+  return audioPath;
+}
+
+async function processNarration(taskId, narrationId, text, voice) {
+  const task = tasks.get(taskId);
+
+  // Generate audio with ElevenLabs
+  task.narrationStatus = 'generating_audio';
+  const audioPath = await generateNarrationAudio(text, voice);
+
+  // Mux audio onto video using ffmpeg
+  task.narrationStatus = 'muxing';
+  const originalVideo = task.outputPath;
+  const narratedVideo = join(OUTPUTS_DIR, `${taskId}-narrated.mp4`);
+
+  await execAsync(
+    `ffmpeg -y -i "${originalVideo}" -i "${audioPath}" ` +
+    `-c:v copy -c:a aac -b:a 192k ` +
+    `-map 0:v:0 -map 1:a:0 ` +
+    `-shortest "${narratedVideo}"`,
+    { timeout: 120000 }
+  );
+
+  // Replace the original video with narrated version
+  const fileStat = await stat(narratedVideo);
+  task.outputPath = narratedVideo;
+  task.downloadUrl = `/downloads/${taskId}-narrated.mp4`;
+  task.fileSize = fileStat.size;
+  task.narrationStatus = 'done';
+
+  // Clean up audio file
+  try { await unlink(audioPath); } catch {}
+}
+
 // Express app
 const app = express();
 app.use(express.json());
 
 // Health check (no auth required)
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', tasks: tasks.size });
+  res.json({ status: 'ok', tasks: tasks.size, narration: !!ELEVEN_LABS_API_KEY });
 });
 
 // llms.txt (no auth required)
