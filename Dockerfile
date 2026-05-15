@@ -1,7 +1,10 @@
 FROM node:22-slim
 
-# Install Chrome dependencies and Chrome
+# Install Chrome dependencies, Chrome, FFmpeg, and fonts
 RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    gnupg \
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -20,6 +23,12 @@ RUN apt-get update && apt-get install -y \
     libnspr4 \
     fonts-noto-color-emoji \
     fonts-inter \
+    ffmpeg \
+    xvfb \
+    xauth \
+    && curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb \
+    && dpkg -i /tmp/chrome.deb || apt-get install -f -y \
+    && rm /tmp/chrome.deb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,8 +38,9 @@ RUN npm install --production
 
 COPY . .
 
-# HyperFrames will download Chrome on first render
-ENV HYPERFRAMES_BROWSER_PATH=/root/.cache/hyperframes/chrome
+# Chrome path for HyperFrames
+ENV CHROME_PATH=/usr/bin/google-chrome-stable
+ENV NODE_ENV=production
 
 EXPOSE 3000
 
