@@ -24,12 +24,17 @@ jobs:
       - name: Run tests
         run: npm test || echo "No tests configured"
 
-      - name: Provision server (first-time setup)
+      - name: Wait for SSH and provision server
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DO_HOST }}
           username: root
           key: ${{ secrets.DO_SSH_KEY }}
+          command_timeout: 30m
+          script_timeout: 30m
+          request_timeout: 30s
+          retry_interval: 15s
+          retry_count: 20
           script: |
             # Skip if already provisioned
             if [ -f /opt/hyper-video/.provisioned ]; then
@@ -121,6 +126,8 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: root
           key: ${{ secrets.DO_SSH_KEY }}
+          command_timeout: 10m
+          script_timeout: 10m
           script: |
             set -e
             cd /opt/hyper-video
