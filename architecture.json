@@ -1,0 +1,119 @@
+{
+  "name": "hyper-video-service",
+  "version": "0.1.0",
+  "description": "MCP server for programmatic video generation using HyperFrames",
+  "architecture": {
+    "entry": {
+      "openclaw_agent": {
+        "type": "client",
+        "description": "Any OpenClaw agent calls hyper-video-service via MCP",
+        "protocol": "StreamableHTTP",
+        "endpoint": "/mcp"
+      }
+    },
+    "mcp_layer": {
+      "server": {
+        "type": "mcp_server",
+        "framework": "Express + @modelcontextprotocol/sdk",
+        "transport": "StreamableHTTP",
+        "port": 3000
+      },
+      "tools": [
+        {
+          "name": "generate_video",
+          "description": "Generate a video from a text prompt",
+          "params": {
+            "prompt": { "type": "string", "description": "Video description" },
+            "duration": { "type": "number", "default": 15 },
+            "width": { "type": "number", "default": 1920 },
+            "height": { "type": "number", "default": 1080 },
+            "style": { "type": "string", "enum": ["dark", "light", "minimal", "bold"], "default": "dark" }
+          },
+          "returns": { "task_id": "string", "status": "generating" }
+        },
+        {
+          "name": "check_video_status",
+          "description": "Check rendering progress",
+          "params": { "task_id": { "type": "string" } },
+          "returns": { "status": "string", "download_url": "string?", "duration_seconds": "number?", "file_size": "number?" }
+        },
+        {
+          "name": "list_templates",
+          "description": "List available video templates",
+          "params": {},
+          "returns": { "templates": "array" }
+        }
+      ]
+    },
+    "agent_layer": {
+      "composition_generator": {
+        "type": "agent_logic",
+        "description": "Turns prompts into HyperFrames compositions (HTML + GSAP + CSS)",
+        "current": "heuristic_parser",
+        "future": "LLM_call"
+      },
+      "hyperframes_composition": {
+        "type": "format",
+        "description": "HTML with data attributes for timing, GSAP for animations, CSS for styling",
+        "attributes": ["data-composition-id", "data-start", "data-duration", "data-width", "data-height", "data-track-index"],
+        "no_build_step": true,
+        "no_react": true
+      }
+    },
+    "render_pipeline": {
+      "chrome_headless": {
+        "type": "renderer",
+        "description": "Captures frames at 30fps by seeking GSAP timeline and screenshotting",
+        "dependency": "Chrome 131+ headless-shell"
+      },
+      "ffmpeg": {
+        "type": "encoder",
+        "description": "Encodes frame stream into MP4 (H.264) or WebM (VP9)",
+        "output_formats": ["mp4", "webm"]
+      }
+    },
+    "storage": {
+      "outputs_dir": {
+        "type": "filesystem",
+        "path": "./outputs/",
+        "description": "Rendered MP4 files named by task ID"
+      },
+      "download_endpoint": {
+        "type": "http",
+        "path": "GET /downloads/:filename",
+        "description": "Serve rendered videos for download"
+      }
+    },
+    "infrastructure": {
+      "deployment": {
+        "platform": "Render.com",
+        "runtime": "Docker",
+        "plan": "starter",
+        "region": "oregon"
+      },
+      "dockerfile": {
+        "base": "node:22-slim",
+        "system_deps": ["libnss3", "libatk1.0-0", "libatk-bridge2.0-0", "libcups2", "libxkbcommon0", "libgbm1", "libasound2", "fonts-noto-color-emoji", "fonts-inter"],
+        "chrome": "downloaded by HyperFrames on first render"
+      },
+      "repo": "https://github.com/TWilson63/hyper-video-service"
+    }
+  },
+  "templates": [
+    { "id": "product-intro", "name": "Product Intro", "description": "Short product introduction with title, problem, and CTA", "duration_range": "10-20s", "aspect": "16:9" },
+    { "id": "feature-announce", "name": "Feature Announcement", "description": "Announce a new feature with animated code/text reveal", "duration_range": "10-15s", "aspect": "16:9" },
+    { "id": "social-clip", "name": "Social Media Clip", "description": "Short vertical video for TikTok/Reels/Shorts", "duration_range": "5-15s", "aspect": "9:16" },
+    { "id": "demo-flow", "name": "Demo Flow", "description": "Step-by-step demo showing a product flow", "duration_range": "15-30s", "aspect": "16:9" },
+    { "id": "text-reveal", "name": "Text Reveal", "description": "Animated text reveal with transitions", "duration_range": "5-10s", "aspect": "16:9" }
+  ],
+  "data_flow": [
+    { "from": "openclaw_agent", "to": "mcp_server", "via": "StreamableHTTP" },
+    { "from": "mcp_server", "to": "composition_generator", "via": "generate_video tool" },
+    { "from": "composition_generator", "to": "hyperframes_composition", "via": "HTML string" },
+    { "from": "hyperframes_composition", "to": "chrome_headless", "via": "file:// URI" },
+    { "from": "chrome_headless", "to": "ffmpeg", "via": "frame stream (image2pipe)" },
+    { "from": "ffmpeg", "to": "outputs_dir", "via": "MP4 file write" },
+    { "from": "outputs_dir", "to": "download_endpoint", "via": "filesystem read" },
+    { "from": "download_endpoint", "to": "openclaw_agent", "via": "HTTP GET" }
+  ]
+}

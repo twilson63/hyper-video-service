@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hyper Video Service — Architecture</title>
+  <meta name="description" content="Architecture diagram for hyper-video-service: MCP server for programmatic video generation using HyperFrames.">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
+
+    .header { background: #161b22; border-bottom: 1px solid #30363d; padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+    .header h1 { font-size: 1.25rem; font-weight: 600; }
+    .header h1 span { color: #3b82f6; }
+    .header a { color: #8b949e; text-decoration: none; font-size: 0.85rem; }
+    .header a:hover { color: #e6edf3; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+    /* Mindmap layout */
+    .mindmap { position: relative; width: 100%; min-height: 700px; }
+
+    .node { position: absolute; border-radius: 12px; padding: 16px 20px; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; user-select: none; }
+    .node:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+    .node.active { box-shadow: 0 0 0 2px #3b82f6, 0 8px 24px rgba(59,130,246,0.3); }
+
+    .node-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+    .node-desc { font-size: 0.8rem; opacity: 0.7; line-height: 1.4; }
+
+    /* Node colors by layer */
+    .node.entry { background: #e74c3c22; border: 1px solid #e74c3c; color: #e74c3c; }
+    .node.entry .node-title { color: #ff6b6b; }
+    .node.entry .node-desc { color: #e74c3cbb; }
+
+    .node.mcp { background: #3b82f622; border: 1px solid #3b82f6; }
+    .node.mcp .node-title { color: #60a5fa; }
+    .node.mcp .node-desc { color: #3b82f6bb; }
+
+    .node.agent { background: #a855f722; border: 1px solid #a855f7; }
+    .node.agent .node-title { color: #c084fc; }
+    .node.agent .node-desc { color: #a855f7bb; }
+
+    .node.render { background: #22c55e22; border: 1px solid #22c55e; }
+    .node.render .node-title { color: #4ade80; }
+    .node.render .node-desc { color: #22c55ebb; }
+
+    .node.storage { background: #f59e0b22; border: 1px solid #f59e0b; }
+    .node.storage .node-title { color: #fbbf24; }
+    .node.storage .node-desc { color: #f59e0bbb; }
+
+    .node.infra { background: #6b728022; border: 1px solid #6b7280; }
+    .node.infra .node-title { color: #9ca3af; }
+    .node.infra .node-desc { color: #6b7280bb; }
+
+    /* SVG arrows */
+    .arrows { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    .arrows line { stroke: #30363d; stroke-width: 2; }
+    .arrows line.active { stroke: #3b82f6; stroke-width: 2; }
+    .arrows polygon { fill: #30363d; }
+    .arrows polygon.active { fill: #3b82f6; }
+
+    /* Detail panel */
+    .detail-panel { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 1.5rem; margin-top: 2rem; display: none; }
+    .detail-panel.visible { display: block; }
+    .detail-panel h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .detail-panel h3 span { font-size: 0.75rem; font-weight: 400; color: #8b949e; margin-left: 0.5rem; }
+    .detail-panel p { font-size: 0.9rem; color: #8b949e; line-height: 1.6; margin-bottom: 1rem; }
+    .detail-panel pre { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; font-size: 0.8rem; overflow-x: auto; color: #e6edf3; line-height: 1.5; }
+    .detail-panel .tag { display: inline-block; background: #3b82f622; color: #60a5fa; border: 1px solid #3b82f6; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; margin-right: 0.25rem; margin-bottom: 0.5rem; }
+
+    .legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem; }
+    .legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #8b949e; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+
+    footer { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid #30363d; font-size: 0.8rem; color: #6b7280; }
+    footer a { color: #8b949e; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1><span>hyper-video-service</span> — Architecture</h1>
+    <a href="https://github.com/TWilson63/hyper-video-service">GitHub</a>
+  </div>
+
+  <div class="container">
+    <div class="mindmap" id="mindmap">
+      <svg class="arrows" id="arrows"></svg>
+
+      <!-- Entry Point -->
+      <div class="node entry" id="node-openclaw" style="left: 460px; top: 20px; width: 220px;" onclick="showDetail('openclaw')">
+        <div class="node-title">OpenClaw Agent</div>
+        <div class="node-desc">Sends MCP tool calls</div>
+      </div>
+
+      <!-- MCP Layer -->
+      <div class="node mcp" id="node-mcp" style="left: 460px; top: 140px; width: 220px;" onclick="showDetail('mcp')">
+        <div class="node-title">MCP Server</div>
+        <div class="node-desc">Streamable HTTP transport</div>
+      </div>
+
+      <!-- MCP Tools -->
+      <div class="node mcp" id="node-generate" style="left: 160px; top: 280px; width: 180px;" onclick="showDetail('generate')">
+        <div class="node-title">generate_video</div>
+        <div class="node-desc">Prompt → task ID</div>
+      </div>
+      <div class="node mcp" id="node-check" style="left: 460px; top: 280px; width: 180px;" onclick="showDetail('check')">
+        <div class="node-title">check_video_status</div>
+        <div class="node-desc">Poll rendering progress</div>
+      </div>
+      <div class="node mcp" id="node-templates" style="left: 760px; top: 280px; width: 180px;" onclick="showDetail('templates')">
+        <div class="node-title">list_templates</div>
+        <div class="node-desc">Available video templates</div>
+      </div>
+
+      <!-- Agent / Composition -->
+      <div class="node agent" id="node-llm" style="left: 160px; top: 420px; width: 200px;" onclick="showDetail('llm')">
+        <div class="node-title">Composition Generator</div>
+        <div class="node-desc">Prompt → HTML+GSAP+CSS</div>
+      </div>
+
+      <div class="node agent" id="node-composition" style="left: 440px; top: 420px; width: 220px;" onclick="showDetail('composition')">
+        <div class="node-title">HyperFrames Composition</div>
+        <div class="node-desc">HTML + data attributes + GSAP</div>
+      </div>
+
+      <!-- Render Pipeline -->
+      <div class="node render" id="node-chrome" style="left: 300px; top: 560px; width: 240px;" onclick="showDetail('chrome')">
+        <div class="node-title">Chrome Headless</div>
+        <div class="node-desc">Captures frames at 30fps</div>
+      </div>
+
+      <div class="node render" id="node-ffmpeg" style="left: 600px; top: 560px; width: 200px;" onclick="showDetail('ffmpeg')">
+        <div class="node-title">FFmpeg Encoding</div>
+        <div class="node-desc">Frames → MP4/WebM</div>
+      </div>
+
+      <!-- Storage -->
+      <div class="node storage" id="node-outputs" style="left: 160px; top: 680px; width: 180px;" onclick="showDetail('outputs')">
+        <div class="node-title">outputs/</div>
+        <div class="node-desc">Rendered MP4 files</div>
+      </div>
+
+      <div class="node storage" id="node-downloads" style="left: 440px; top: 680px; width: 200px;" onclick="showDetail('downloads')">
+        <div class="node-title">GET /downloads/:id</div>
+        <div class="node-desc">Serve rendered videos</div>
+      </div>
+
+      <!-- Infrastructure -->
+      <div class="node infra" id="node-render" style="left: 760px; top: 560px; width: 200px;" onclick="showDetail('render')">
+        <div class="node-title">Render.com</div>
+        <div class="node-desc">Docker deployment</div>
+      </div>
+
+      <div class="node infra" id="node-docker" style="left: 760px; top: 420px; width: 200px;" onclick="showDetail('docker')">
+        <div class="node-title">Dockerfile</div>
+        <div class="node-desc">Node 22 + Chrome + deps</div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background: #e74c3c;"></div> Entry Point</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #3b82f6;"></div> MCP Layer</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #a855f7;"></div> Composition</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #22c55e;"></div> Render Pipeline</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #f59e0b;"></div> Storage</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #6b7280;"></div> Infrastructure</div>
+    </div>
+
+    <div class="detail-panel" id="detail-panel"></div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/TWilson63/hyper-video-service">hyper-video-service</a> · <a href="https://hyperframes.heygen.com">HyperFrames</a> · Published on <a href="https://zenbin.org">ZenBin</a>
+  </footer>
+
+  <script>
+    const details = {
+      openclaw: {
+        title: 'OpenClaw Agent',
+        layer: 'Entry Point',
+        description: 'Any OpenClaw agent can call hyper-video-service through MCP. The agent sends a video generation prompt and receives back a task ID, then polls for completion and gets a download URL.',
+        code: `// In openclaw.json or MCP config:
+{
+  "mcpServers": {
+    "hyper-video": {
+      "url": "https://hyper-video-service.onrender.com/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}
+
+// Agent calls:
+generate_video({
+  prompt: "15s dark product intro for ZenBin",
+  duration: 15,
+  style: "dark"
+})`
+      },
+      mcp: {
+        title: 'MCP Server',
+        layer: 'MCP Transport',
+        description: 'Express server exposing MCP tools via StreamableHTTP transport. Handles tool calls, manages task lifecycle, serves downloads.',
+        code: `// src/index.js
+const server = new McpServer({
+  name: 'hyper-video-service',
+  version: '0.1.0',
+});
+
+// Three tools: generate_video, check_video_status, list_templates
+// StreamableHTTP transport on port 3000
+const transport = new StreamableHTTPServerTransport({
+  port: process.env.PORT || 3000,
+});`
+      },
+      generate: {
+        title: 'generate_video',
+        layer: 'MCP Tool',
+        description: 'Accepts a text prompt, duration, dimensions, and style. Returns a task ID immediately while processing happens asynchronously.',
+        code: `generate_video({
+  prompt: "15s dark product intro, showing CAP Protocol headers",
+  duration: 15,        // seconds
+  width: 1920,          // pixels
+  height: 1080,         // pixels
+  style: "dark"         // dark|light|minimal|bold
+})
+
+// Returns:
+{ "task_id": "abc123", "status": "generating" }`
+      },
+      check: {
+        title: 'check_video_status',
+        layer: 'MCP Tool',
+        description: 'Poll for rendering progress. Returns status, download URL, file size, and render duration when complete.',
+        code: `check_video_status({ task_id: "abc123" })
+
+// Returns when done:
+{
+  "task_id": "abc123",
+  "status": "done",
+  "download_url": "/downloads/abc123.mp4",
+  "duration_seconds": 18,
+  "file_size": 2458624
+}`
+      },
+      templates: {
+        title: 'list_templates',
+        layer: 'MCP Tool',
+        description: 'Lists available video templates with descriptions and supported durations.',
+        code: `list_templates({})
+
+// Returns:
+{
+  "templates": [
+    { "id": "product-intro", "name": "Product Intro",
+      "description": "Short product intro with title, problem, CTA",
+      "duration_range": "10-20s" },
+    { "id": "feature-announce", ... },
+    { "id": "social-clip", ... },
+    { "id": "demo-flow", ... },
+    { "id": "text-reveal", ... }
+  ]
+}`
+      },
+      llm: {
+        title: 'Composition Generator',
+        layer: 'Agent Logic',
+        description: 'Turns the prompt into a HyperFrames composition. Parses scenes, generates HTML with GSAP animations, applies style variables (dark/light/minimal/bold). Currently uses heuristic parsing; could be replaced with LLM call for richer prompts.',
+        code: `// Generates HTML like:
+<div id="root" data-composition-id="main"
+     data-start="0" data-duration="15"
+     data-width="1920" data-height="1080">
+
+  <div id="scene1" class="clip scene"
+       data-start="0" data-duration="4"
+       data-track-index="1">
+    <div class="headline">Agents create content.</div>
+  </div>
+
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.from("#scene1 .headline",
+      { opacity: 0, y: 40, duration: 1 }, 0);
+    window.__timelines["main"] = tl;
+  </script>
+</div>`
+      },
+      composition: {
+        title: 'HyperFrames Composition',
+        layer: 'Video Format',
+        description: 'HTML file with data attributes for timing, GSAP for animations, and CSS for styling. This is what HyperFrames renders frame-by-frame. No React, no build step.',
+        code: `<!-- Key data attributes -->
+data-composition-id  → unique ID
+data-start          → start time (seconds)
+data-duration        → duration (seconds)
+data-width/height   → resolution
+data-track-index     → layer order
+
+<!-- GSAP timelines -->
+window.__timelines["main"] = gsap.timeline({ paused: true });
+
+<!-- Render -->
+npx hyperframes render --input comp.html --output video.mp4`
+      },
+      chrome: {
+        title: 'Chrome Headless',
+        layer: 'Render Pipeline',
+        description: 'HyperFrames drives headless Chrome to capture each frame at 30fps. Each frame is a screenshot of the HTML composition at a specific timestamp. The GSAP timeline is seeked to the correct time before each capture.',
+        code: `// HyperFrames handles this internally:
+// 1. Launch Chrome headless
+// 2. Load composition HTML
+// 3. For each frame (0 to duration*fps):
+//    - Seek GSAP timeline to frame time
+//    - Screenshot the page
+//    - Pipe frame to FFmpeg
+// 4. Encode frames to MP4
+
+// Requires: libnss3, libatk, libgbm, etc.
+// All included in the Dockerfile`
+      },
+      ffmpeg: {
+        title: 'FFmpeg Encoding',
+        layer: 'Render Pipeline',
+        description: 'FFmpeg receives the frame stream from Chrome and encodes it into the final MP4. Supports multiple output formats and quality levels.',
+        code: `// Output formats:
+// - MP4 (H.264) — default, universal compatibility
+// - WebM (VP9) — transparent overlay support
+
+// Render options:
+npx hyperframes render -o output.mp4                    // standard
+npx hyperframes render -o output.mp4 --quality high     // high quality
+npx hyperframes render -o output.webm --format webm    // WebM with alpha`
+      },
+      outputs: {
+        title: 'outputs/',
+        layer: 'Storage',
+        description: 'Rendered MP4 files stored on the server filesystem. Cleaned up after a configurable TTL. Each file is named by task ID.',
+        code: `// File structure:
+outputs/
+  abc123.mp4     // rendered video
+  def456.mp4     // another video
+  ...
+
+// Configurable via OUTPUTS_DIR env var
+// Default: ./outputs/`
+      },
+      downloads: {
+        title: 'GET /downloads/:id',
+        layer: 'HTTP API',
+        description: 'Express endpoint that serves rendered video files for download. Used by agents to retrieve the final MP4 after rendering completes.',
+        code: `// Express route:
+app.get('/downloads/:filename', (req, res) => {
+  const filePath = join(OUTPUTS_DIR, req.params.filename);
+  res.download(filePath);
+});
+
+// After check_video_status returns "done":
+// GET https://hyper-video-service.onrender.com/downloads/abc123.mp4`
+      },
+      render: {
+        title: 'Render.com',
+        layer: 'Infrastructure',
+        description: 'Deployed as a Docker web service on Render. The Dockerfile includes Node 22, Chrome, FFmpeg, and all system libraries. Auto-deploys from GitHub.',
+        code: `# render.yaml
+services:
+  - type: web
+    name: hyper-video-service
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MCP_TRANSPORT
+        value: streamable-http`
+      },
+      docker: {
+        title: 'Dockerfile',
+        layer: 'Infrastructure',
+        description: 'Node 22 slim image with all Chrome dependencies pre-installed. HyperFrames downloads its own Chrome binary on first render.',
+        code: `FROM node:22-slim
+
+RUN apt-get update && apt-get install -y \\
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 \\
+    libcups2 libxkbcommon0 libgbm1 \\
+    libasound2 libxshmfence1 \\
+    fonts-noto-color-emoji fonts-inter \\
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
+COPY . .
+
+EXPOSE 3000
+CMD ["node", "src/index.js"]`
+      }
+    };
+
+    function showDetail(id) {
+      // Remove active from all nodes
+      document.querySelectorAll('.node').forEach(n => n.classList.remove('active'));
+      // Add active to clicked
+      const node = document.getElementById('node-' + id);
+      if (node) node.classList.add('active');
+
+      const detail = details[id];
+      if (!detail) return;
+
+      const panel = document.getElementById('detail-panel');
+      panel.innerHTML = `
+        <h3>${detail.title} <span>${detail.layer}</span></h3>
+        <p>${detail.description}</p>
+        <div>${(detail.code || '').split('\\n').slice(0, 3).map(() => '<span class="tag">' + detail.layer + '</span>').join('')}</div>
+        <pre>${detail.code || ''}</pre>
+      `;
+      panel.classList.add('visible');
+    }
+
+    // Draw arrows
+    function drawArrows() {
+      const svg = document.getElementById('arrows');
+      const connections = [
+        ['node-openclaw', 'node-mcp'],
+        ['node-mcp', 'node-generate'],
+        ['node-mcp', 'node-check'],
+        ['node-mcp', 'node-templates'],
+        ['node-generate', 'node-llm'],
+        ['node-llm', 'node-composition'],
+        ['node-composition', 'node-chrome'],
+        ['node-chrome', 'node-ffmpeg'],
+        ['node-ffmpeg', 'node-downloads'],
+        ['node-chrome', 'node-outputs'],
+        ['node-outputs', 'node-downloads'],
+        ['node-docker', 'node-render'],
+        ['node-render', 'node-chrome'],
+      ];
+
+      svg.innerHTML = '';
+      svg.style.width = '100%';
+      svg.style.height = '100%';
+
+      connections.forEach(([fromId, toId]) => {
+        const from = document.getElementById(fromId);
+        const to = document.getElementById(toId);
+        if (!from || !to) return;
+
+        const fromRect = from.getBoundingClientRect();
+        const toRect = to.getBoundingClientRect();
+        const mapRect = document.getElementById('mindmap').getBoundingClientRect();
+
+        const x1 = fromRect.left + fromRect.width / 2 - mapRect.left;
+        const y1 = fromRect.top + fromRect.height - mapRect.top;
+        const x2 = toRect.left + toRect.width / 2 - mapRect.left;
+        const y2 = toRect.top - mapRect.top;
+
+        // Line
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        svg.appendChild(line);
+      });
+    }
+
+    window.addEventListener('load', drawArrows);
+    window.addEventListener('resize', drawArrows);
+  </script>
+</body>
+</html>
