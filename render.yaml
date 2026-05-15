@@ -1,6 +1,5 @@
 services:
-  hyper-video-service:
-    type: web
+  - type: web
     name: hyper-video-service
     runtime: docker
     repo: https://github.com/TWilson63/hyper-video-service
