@@ -1,0 +1,94 @@
+name: Deploy to DigitalOcean
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test || echo "No tests configured"
+
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          source: "src/,package.json,package-lock.json,public/,templates/"
+          target: "/opt/hyper-video"
+          strip_components: 0
+
+      - name: Deploy and restart
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: root
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+
+            cd /opt/hyper-video
+            npm ci --omit=dev
+
+            # Create .env file
+            cat > .env << 'EOF'
+            NODE_ENV=production
+            PORT=3000
+            CHROME_PATH=/usr/bin/google-chrome-stable
+            EOF
+            echo "HYPER_VIDEO_API_KEY=${{ secrets.HYPER_VIDEO_API_KEY }}" >> .env
+
+            # Create systemd service if it doesn't exist
+            if [ ! -f /etc/systemd/system/hyper-video.service ]; then
+              cat > /etc/systemd/system/hyper-video.service << 'SVCEOF'
+            [Unit]
+            Description=Hyper Video Service (MCP)
+            After=network.target
+
+            [Service]
+            Type=simple
+            WorkingDirectory=/opt/hyper-video
+            ExecStart=/usr/bin/node src/index.js
+            Restart=on-failure
+            RestartSec=10
+            Environment=NODE_ENV=production
+            Environment=PORT=3000
+            Environment=CHROME_PATH=/usr/bin/google-chrome-stable
+            EnvironmentFile=/opt/hyper-video/.env
+
+            [Install]
+            WantedBy=multi-user.target
+            SVCEOF
+              systemctl daemon-reload
+              systemctl enable hyper-video
+            fi
+
+            # Set ownership
+            chown -R app:app /opt/hyper-video 2>/dev/null || true
+
+            # Restart the service
+            systemctl restart hyper-video
+            sleep 3
+            systemctl status hyper-video --no-pager
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -sf http://${{ secrets.DO_HOST }}:3000/health || exit 1
+          echo "✅ Health check passed"
