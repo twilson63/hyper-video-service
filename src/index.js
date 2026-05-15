@@ -258,20 +258,31 @@ async function renderVideo(inputPath, outputPath, duration, width, height) {
   return { stdout, stderr };
 }
 
-// Express server for MCP + downloads
+// API Key authentication
+const API_KEY = process.env.HYPER_VIDEO_API_KEY;
+
+// Auth middleware for Express routes
+function requireApiKey(req, res, next) {
+  if (!API_KEY) return next(); // No key set = open access
+  const auth = req.headers['authorization'];
+  const key = req.headers['x-api-key'];
+  const queryKey = req.query?.apiKey;
+  if (auth === `Bearer ${API_KEY}` || key === API_KEY || queryKey === API_KEY) return next();
+  res.status(401).json({ error: 'Unauthorized. Set Authorization: Bearer <key> or X-API-Key header.' });
+}
+
+// Express server for MCP + downloads + health
 const app = express();
 app.use(express.json());
 
-// Health check
+// Health check (no auth required)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', tasks: tasks.size });
 });
 
-// Download endpoint
-app.get('/downloads/:filename', (req, res) => {
-  const filePath = join(OUTPUTS_DIR, req.params.filename);
-  res.download(filePath);
-});
+// Auth-protected routes
+app.use('/downloads', requireApiKey, express.static(OUTPUTS_DIR));
+app.use('/mcp', requireApiKey);
 
 // MCP endpoint
 const transport = new StreamableHTTPServerTransport({

@@ -11,5 +11,5 @@ services:
         value: production
       - key: MCP_TRANSPORT
         value: streamable-http
-      - key: RENDER_API_KEY
-        sync: false
+      - key: HYPER_VIDEO_API_KEY
+        sync: false  # Generate a secure random key and set in Render dashboard
