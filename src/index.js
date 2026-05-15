@@ -158,11 +158,11 @@ Sizes: 1920x1080 (landscape), 1080x1920 (portrait/vertical), 1080x1080 (square).
     'generate_narration',
     `Generate narration audio from text using ElevenLabs text-to-speech, then mux it onto an existing video. Returns the updated video download URL when done.
 
-Available voices: "rachel" (female, warm, conversational), "drew" (male, calm, professional), "clyde" (male, deep, authoritative), "bella" (female, bright, friendly). Default: "rachel".`,
+Available voices: "rachel" (female, warm, conversational), "drew" (male, calm, professional), "clyde" (male, deep, authoritative), "bella" (female, bright, friendly), "rakis" (custom cloned voice). Default: "rakis".`,
     {
       task_id: z.string().describe('The task ID of a completed video to add narration to'),
       text: z.string().describe('The narration script text to convert to speech'),
-      voice: z.enum(['rachel', 'drew', 'clyde', 'bella']).default('rachel').describe('Voice to use for narration (default: rachel)'),
+      voice: z.enum(['rachel', 'drew', 'clyde', 'bella', 'rakis']).default('rakis').describe('Voice to use for narration (default: rakis)'),
     },
     async ({ task_id, text, voice = 'rachel' }) => {
       if (!ELEVEN_LABS_API_KEY) {
@@ -337,6 +337,7 @@ const VOICE_IDS = {
   drew: '2EpgWj0sAnM8pE0GsxYs',   // Drew - calm, professional
   clyde: '2EpgWj0sAnM8pE0GsxYs',  // Clyde - deep, authoritative (using Drew as fallback)
   bella: 'EXAVITQu4ms4iquZ1x9D',   // Bella - bright, friendly
+  rakis: 'KUL4O9NisC7TSWz760iD',   // Rakis - cloned voice
 };
 
 async function generateNarrationAudio(text, voice) {
