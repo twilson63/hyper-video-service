@@ -289,16 +289,23 @@ app.get('/llms.txt', (req, res) => {
 // Auth-protected downloads
 app.use('/downloads', requireApiKey, express.static(OUTPUTS_DIR));
 
-// MCP endpoint — connect transport first, then apply auth middleware to the routes it registered
-const transport = new StreamableHTTPServerTransport({
-  port: process.env.PORT || 3000,
+// MCP endpoint — handle requests via transport with auth
+app.post('/mcp', requireApiKey, (req, res) => {
+  transport.handleRequest(req, res, req.body);
+});
+app.get('/mcp', requireApiKey, (req, res) => {
+  transport.handleRequest(req, res);
+});
+app.delete('/mcp', requireApiKey, (req, res) => {
+  transport.handleRequest(req, res);
 });
 
-// Connect MCP transport (registers POST/GET/DELETE handlers on /mcp)
-await server.connect(transport);
+// Connect MCP transport
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: undefined, // stateless mode
+});
 
-// Now apply auth to the MCP routes the transport just registered
-app.use('/mcp', requireApiKey);
+await server.connect(transport);
 
 const PORT = process.env.PORT || 3000;
 
