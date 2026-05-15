@@ -1,0 +1,123 @@
+# hyper-video-service
+
+> MCP server for programmatic video generation. Send a prompt, get an MP4.
+
+## What It Does
+
+Generates short videos from text prompts. You describe the video, the service creates a HyperFrames composition (HTML + GSAP), renders it through headless Chrome, and returns a downloadable MP4.
+
+## Quick Start
+
+### MCP Connection
+
+```json
+{
+  "mcpServers": {
+    "hyper-video": {
+      "url": "https://hyper-video-service.onrender.com/mcp",
+      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}
+```
+
+### Authentication
+
+Set `HYPER_VIDEO_API_KEY` env var. Pass via:
+- `Authorization: Bearer <key>` header
+- `X-API-Key: <key>` header
+- `?apiKey=<key>` query parameter
+
+## Tools
+
+### generate_video
+
+Generate a video from a text prompt.
+
+**Parameters:**
+- `prompt` (string, required): Description of the video content and style
+- `duration` (number, default 15): Duration in seconds (5-60)
+- `width` (number, default 1920): Width in pixels
+- `height` (number, default 1080): Height in pixels (1080 for landscape, 1920 for portrait)
+- `style` (string, default "dark"): Visual style — dark, light, minimal, bold
+
+**Returns:** `{ "task_id": "abc123", "status": "generating" }`
+
+**Example:**
+```json
+{
+  "prompt": "15s product intro: dark background, blue accent, show CAP Protocol signing headers, end with zenbin.org",
+  "duration": 15,
+  "width": 1920,
+  "height": 1080,
+  "style": "dark"
+}
+```
+
+### check_video_status
+
+Check if a video has finished rendering.
+
+**Parameters:**
+- `task_id` (string, required): The task ID from generate_video
+
+**Returns:**
+- Generating: `{ "status": "generating" }`
+- Rendering: `{ "status": "rendering" }`
+- Done: `{ "status": "done", "download_url": "/downloads/abc123.mp4", "duration_seconds": 18, "file_size": 2458624 }`
+- Failed: `{ "status": "failed", "error": "..." }`
+
+### list_templates
+
+List available video templates.
+
+**Returns:** Array of templates with id, name, description, duration_range, and aspect ratio.
+
+**Templates:**
+- `product-intro`: Short product introduction (10-20s, 16:9)
+- `feature-announce`: Feature announcement with animated text reveal (10-15s, 16:9)
+- `social-clip`: Short vertical video for TikTok/Reels/Shorts (5-15s, 9:16)
+- `demo-flow`: Step-by-step demo showing a product flow (15-30s, 16:9)
+- `text-reveal`: Animated text reveal with transitions (5-10s, 16:9)
+
+## Architecture
+
+```
+OpenClaw Agent → MCP Server → Composition Generator → HyperFrames (HTML+GSAP) → Chrome Headless → FFmpeg → MP4
+```
+
+Interactive diagram: https://zed.zenbin.org/hyper-video-architecture
+
+## Styles
+
+| Style | Background | Text | Accent | Use For |
+|-------|-----------|------|--------|---------|
+| dark | #0a0a0a | #fafafa | #3b82f6 (blue) | Tech products, developer tools |
+| light | #fafafa | #1a1a1a | #2563eb | Clean, professional |
+| minimal | #ffffff | #111111 | #111111 | Documentation, explainers |
+| bold | #000000 | #ffffff | #f97316 (orange) | Launches, announcements |
+
+## Output
+
+- **Format:** MP4 (H.264) or WebM (VP9)
+- **Resolution:** Configurable (default 1920x1080)
+- **Frame rate:** 30fps
+- **Download:** GET `/downloads/{task_id}.mp4`
+
+## Self-Hosting
+
+```bash
+git clone https://github.com/TWilson63/hyper-video-service.git
+cd hyper-video-service
+npm install
+HYPER_VIDEO_API_KEY=your-secret npm start
+```
+
+Requires Node.js 22+ and Chrome/Chromium with system libraries (libnss3, libatk, etc.). See Dockerfile for full dependency list.
+
+## Repository
+
+https://github.com/TWilson63/hyper-video-service

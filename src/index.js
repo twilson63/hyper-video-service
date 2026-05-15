@@ -280,6 +280,11 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', tasks: tasks.size });
 });
 
+// llms.txt (no auth required)
+app.get('/llms.txt', (req, res) => {
+  res.sendFile(join(process.cwd(), 'public', 'llms.txt'));
+});
+
 // Auth-protected routes
 app.use('/downloads', requireApiKey, express.static(OUTPUTS_DIR));
 app.use('/mcp', requireApiKey);
