@@ -106,7 +106,7 @@ jobs:
             echo "=== Provisioning complete ==="
 
       - name: Copy files to server
-        uses: appleboy/scp-action@v0
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DO_HOST }}
           username: root
