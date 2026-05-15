@@ -4,7 +4,7 @@ services:
     name: hyper-video-service
     runtime: docker
     repo: https://github.com/TWilson63/hyper-video-service
-    branch: master
+    branch: main
     plan: starter
     envVars:
       - key: NODE_ENV
