@@ -286,21 +286,22 @@ app.get('/llms.txt', (req, res) => {
   res.sendFile(join(process.cwd(), 'public', 'llms.txt'));
 });
 
-// Auth-protected routes
+// Auth-protected downloads
 app.use('/downloads', requireApiKey, express.static(OUTPUTS_DIR));
-app.use('/mcp', requireApiKey);
 
-// MCP endpoint
+// MCP endpoint — connect transport first, then apply auth middleware to the routes it registered
 const transport = new StreamableHTTPServerTransport({
   port: process.env.PORT || 3000,
 });
 
-const PORT = process.env.PORT || 3000;
-
-// Connect MCP transport
+// Connect MCP transport (registers POST/GET/DELETE handlers on /mcp)
 await server.connect(transport);
 
-// Start Express
+// Now apply auth to the MCP routes the transport just registered
+app.use('/mcp', requireApiKey);
+
+const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`hyper-video-service running on port ${PORT}`);
   console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
