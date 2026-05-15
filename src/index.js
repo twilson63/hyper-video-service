@@ -153,14 +153,17 @@ async function processVideo(taskId, params) {
   task.status = 'generating';
   const composition = await generateComposition(params);
 
-  const compPath = join(COMPOSITIONS_DIR, `${taskId}.html`);
+  // HyperFrames expects --input to be a directory (composition folder)
+  const compDir = join(COMPOSITIONS_DIR, taskId);
+  await mkdir(compDir, { recursive: true });
+  const compPath = join(compDir, 'index.html');
   await writeFile(compPath, composition);
 
   task.status = 'rendering';
   const outputPath = join(OUTPUTS_DIR, `${taskId}.mp4`);
 
   const startTime = Date.now();
-  await renderVideo(compPath, outputPath, params.duration, params.width, params.height);
+  await renderVideo(compDir, outputPath, params.duration, params.width, params.height);
   const renderDuration = (Date.now() - startTime) / 1000;
 
   const fileStat = await stat(outputPath);
@@ -171,7 +174,9 @@ async function processVideo(taskId, params) {
   task.fileSize = fileStat.size;
   task.outputPath = outputPath;
 
+  // Clean up composition directory
   try { await unlink(compPath); } catch {}
+  try { await import('fs').then(f => f.promises.rmdir(compDir)); } catch {}
 }
 
 async function generateComposition(params) {
