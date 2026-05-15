@@ -1,0 +1,20 @@
+{
+  "name": "hyper-video-service",
+  "version": "0.1.0",
+  "description": "MCP server for programmatic video generation using HyperFrames",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "render": "npx hyperframes@0.6.6 render"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^4.21.0",
+    "uuid": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

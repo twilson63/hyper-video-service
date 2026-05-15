@@ -1,0 +1,15 @@
+services:
+  hyper-video-service:
+    type: web
+    name: hyper-video-service
+    runtime: docker
+    repo: https://github.com/TWilson63/hyper-video-service
+    branch: main
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MCP_TRANSPORT
+        value: streamable-http
+      - key: RENDER_API_KEY
+        sync: false
