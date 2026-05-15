@@ -2,8 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { mkdir, writeFile, readFile, unlink, readdir, stat } from 'fs/promises';
+import { mkdir, writeFile, unlink, stat } from 'fs/promises';
 import { join } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -13,9 +12,6 @@ const execFileAsync = promisify(execFile);
 
 // Task storage (in-memory for single instance, use Redis/DB for multi-instance)
 const tasks = new Map();
-
-// Session transport storage
-const transports = {};
 
 // Directories
 const COMPOSITIONS_DIR = process.env.COMPOSITIONS_DIR || join(process.cwd(), 'compositions');
@@ -286,42 +282,17 @@ app.use('/downloads', requireApiKey, express.static(OUTPUTS_DIR));
 
 // MCP POST handler
 app.post('/mcp', requireApiKey, async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
-
   try {
-    let transport;
+    // Stateless mode: create a new transport per request
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
 
-    if (sessionId && transports[sessionId]) {
-      // Existing session
-      transport = transports[sessionId];
-    } else if (!sessionId && isInitializeRequest(req.body)) {
-      // New session
-      transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => uuidv4(),
-      });
-
-      transport.onclose = () => {
-        const sid = transport.sessionId;
-        if (sid && transports[sid]) {
-          delete transports[sid];
-        }
-      };
-
-      const server = getServer();
-      await server.connect(transport);
-      transports[transport.sessionId] = transport;
-    } else {
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
-        id: null,
-      });
-      return;
-    }
-
+    const server = getServer();
+    await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
-    console.error('Error handling MCP POST:', error);
+    console.error('Error handling MCP request:', error);
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: '2.0',
@@ -332,43 +303,15 @@ app.post('/mcp', requireApiKey, async (req, res) => {
   }
 });
 
-// MCP GET handler (SSE streams)
+// MCP GET handler (SSE streams - not used in stateless mode, but required by spec)
 app.get('/mcp', requireApiKey, async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send('Invalid or missing session ID');
-    return;
-  }
-
-  try {
-    const transport = transports[sessionId];
-    await transport.handleRequest(req, res);
-  } catch (error) {
-    console.error('Error handling MCP GET:', error);
-    if (!res.headersSent) {
-      res.status(500).send('Error processing SSE stream');
-    }
-  }
+  // In stateless mode, we don't maintain SSE connections
+  res.status(405).json({ error: 'Method not allowed in stateless mode' });
 });
 
-// MCP DELETE handler (session termination)
+// MCP DELETE handler (session termination - not needed in stateless mode)
 app.delete('/mcp', requireApiKey, async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send('Invalid or missing session ID');
-    return;
-  }
-
-  try {
-    const transport = transports[sessionId];
-    await transport.handleRequest(req, res);
-    delete transports[sessionId];
-  } catch (error) {
-    console.error('Error handling MCP DELETE:', error);
-    if (!res.headersSent) {
-      res.status(500).send('Error processing session termination');
-    }
-  }
+  res.status(405).json({ error: 'Method not allowed in stateless mode' });
 });
 
 const PORT = process.env.PORT || 3000;
@@ -381,16 +324,7 @@ app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   console.log('Shutting down...');
-  for (const sessionId in transports) {
-    try {
-      await transports[sessionId].close();
-      delete transports[sessionId];
-    } catch (error) {
-      console.error(`Error closing transport for session ${sessionId}:`, error);
-    }
-  }
-  console.log('Server shutdown complete');
   process.exit(0);
 });
