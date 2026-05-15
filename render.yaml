@@ -12,4 +12,4 @@ services:
       - key: MCP_TRANSPORT
         value: streamable-http
       - key: HYPER_VIDEO_API_KEY
-        sync: false  # Generate a secure random key and set in Render dashboard
+        sync: false
