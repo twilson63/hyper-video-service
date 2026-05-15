@@ -17,6 +17,7 @@ SSH_KEY_ID=${SSH_KEY_ID:-}  # DO SSH key fingerprint
 REGION=${DO_REGION:-nyc1}
 DROPLET_NAME=${DROPLET_NAME:-hyper-video-service}
 SIZE=${DO_SIZE:-s-2vcpu-4gb}
+DROPLET_IP=${DO_DROPLET_IP:-167.99.224.225}  # Default to current droplet
 
 if [ -z "$DIGITALOCEAN_TOKEN" ]; then
   echo "Error: DIGITALOCEAN_TOKEN not set"
@@ -27,6 +28,8 @@ fi
 if [ -n "$1" ]; then
   DROPLET_IP="$1"
   echo "Using existing droplet: $DROPLET_IP"
+elsif [ -n "$DO_DROPLET_IP" ]; then
+  echo "Using configured droplet: $DROPLET_IP"
 else
   echo "Creating Droplet: $DROPLET_NAME ($SIZE in $REGION)..."
 
