@@ -1,12 +1,19 @@
-name: Deploy to DigitalOcean
+name: Deploy to DigitalOcean (disabled)
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_dispatch: # Manual trigger only — no auto-deploy on push
+    inputs:
+      confirm:
+        description: 'Type DEPLOY to confirm'
+        required: true
+
+# This workflow deploys to a DigitalOcean droplet.
+# Currently disabled — app is running on Render instead.
+# To re-enable: add `push: branches: [main]` back to `on:`
 
 jobs:
   deploy:
+    if: ${{ github.event.inputs.confirm == 'DEPLOY' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
