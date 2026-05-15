@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { mkdir, writeFile, readFile, unlink, readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { execFile } from 'child_process';
@@ -13,6 +14,9 @@ const execFileAsync = promisify(execFile);
 // Task storage (in-memory for single instance, use Redis/DB for multi-instance)
 const tasks = new Map();
 
+// Session transport storage
+const transports = {};
+
 // Directories
 const COMPOSITIONS_DIR = process.env.COMPOSITIONS_DIR || join(process.cwd(), 'compositions');
 const OUTPUTS_DIR = process.env.OUTPUTS_DIR || join(process.cwd(), 'outputs');
@@ -23,184 +27,188 @@ await mkdir(COMPOSITIONS_DIR, { recursive: true });
 await mkdir(OUTPUTS_DIR, { recursive: true });
 await mkdir(TEMPLATES_DIR, { recursive: true });
 
-// Create MCP server
-const server = new McpServer({
-  name: 'hyper-video-service',
-  version: '0.1.0',
-});
+// API Key authentication
+const API_KEY = process.env.HYPER_VIDEO_API_KEY;
 
-// Tool: generate_video
-server.tool(
-  'generate_video',
-  `Generate a video from a text prompt. The service creates a HyperFrames composition (HTML+GSAP), renders it to MP4 using headless Chrome, and returns a download URL when done.
+function requireApiKey(req, res, next) {
+  if (!API_KEY) return next();
+  const auth = req.headers['authorization'];
+  const key = req.headers['x-api-key'];
+  const queryKey = req.query?.apiKey;
+  if (auth === `Bearer ${API_KEY}` || key === API_KEY || queryKey === API_KEY) return next();
+  res.status(401).json({ error: 'Unauthorized. Set Authorization: Bearer <key> or X-API-Key header.' });
+}
+
+// Create MCP server factory
+function getServer() {
+  const server = new McpServer({
+    name: 'hyper-video-service',
+    version: '0.1.0',
+  });
+
+  server.tool(
+    'generate_video',
+    `Generate a video from a text prompt. The service creates a HyperFrames composition (HTML+GSAP), renders it to MP4 using headless Chrome, and returns a download URL when done.
 
 Styles: "dark" (dark background, light text), "light" (white background), "minimal" (clean, minimal), "bold" (large typography, high contrast).
 
 Durations: 5-60 seconds. Default is 15.
 Sizes: 1920x1080 (landscape), 1080x1920 (portrait/vertical), 1080x1080 (square).`,
-  {
-    prompt: z.string().describe('Description of the video to generate. Be specific about scenes, text, transitions, and style.'),
-    duration: z.number().default(15).describe('Duration in seconds (default: 15)'),
-    width: z.number().default(1920).describe('Video width in pixels (default: 1920)'),
-    height: z.number().default(1080).describe('Video height in pixels (default: 1080)'),
-    style: z.enum(['dark', 'light', 'minimal', 'bold']).default('dark').describe('Visual style (default: dark)'),
-  },
-  async ({ prompt, duration = 15, width = 1920, height = 1080, style = 'dark' }) => {
-    const taskId = uuidv4();
-    
-    tasks.set(taskId, {
-      id: taskId,
-      status: 'generating',
-      prompt,
-      duration,
-      width,
-      height,
-      style,
-      createdAt: new Date().toISOString(),
-    });
+    {
+      prompt: z.string().describe('Description of the video to generate. Be specific about scenes, text, transitions, and style.'),
+      duration: z.number().default(15).describe('Duration in seconds (default: 15)'),
+      width: z.number().default(1920).describe('Video width in pixels (default: 1920)'),
+      height: z.number().default(1080).describe('Video height in pixels (default: 1080)'),
+      style: z.enum(['dark', 'light', 'minimal', 'bold']).default('dark').describe('Visual style (default: dark)'),
+    },
+    async ({ prompt, duration = 15, width = 1920, height = 1080, style = 'dark' }) => {
+      const taskId = uuidv4();
 
-    // Start async processing
-    processVideo(taskId, { prompt, duration, width, height, style }).catch(err => {
-      const task = tasks.get(taskId);
-      if (task) {
-        task.status = 'failed';
-        task.error = err.message;
-      }
-    });
+      tasks.set(taskId, {
+        id: taskId,
+        status: 'generating',
+        prompt,
+        duration,
+        width,
+        height,
+        style,
+        createdAt: new Date().toISOString(),
+      });
 
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({ task_id: taskId, status: 'generating', prompt, duration, width, height, style }, null, 2),
-      }],
-    };
-  }
-);
+      processVideo(taskId, { prompt, duration, width, height, style }).catch(err => {
+        const task = tasks.get(taskId);
+        if (task) {
+          task.status = 'failed';
+          task.error = err.message;
+        }
+      });
 
-// Tool: check_video_status
-server.tool(
-  'check_video_status',
-  'Check the rendering status of a video generation task.',
-  {
-    task_id: z.string().describe('The task ID returned by generate_video'),
-  },
-  async ({ task_id }) => {
-    const task = tasks.get(task_id);
-    if (!task) {
       return {
-        content: [{ type: 'text', text: JSON.stringify({ error: 'Task not found' }) }],
-        isError: true,
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ task_id: taskId, status: 'generating', prompt, duration, width, height, style }, null, 2),
+        }],
       };
     }
+  );
 
-    const response = {
-      task_id: task.id,
-      status: task.status,
-      prompt: task.prompt,
-      created_at: task.createdAt,
-    };
+  server.tool(
+    'check_video_status',
+    'Check the rendering status of a video generation task.',
+    {
+      task_id: z.string().describe('The task ID returned by generate_video'),
+    },
+    async ({ task_id }) => {
+      const task = tasks.get(task_id);
+      if (!task) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ error: 'Task not found' }) }],
+          isError: true,
+        };
+      }
 
-    if (task.status === 'done') {
-      response.download_url = task.downloadUrl;
-      response.duration_seconds = task.renderDuration;
-      response.file_size = task.fileSize;
-    } else if (task.status === 'failed') {
-      response.error = task.error;
+      const response = {
+        task_id: task.id,
+        status: task.status,
+        prompt: task.prompt,
+        created_at: task.createdAt,
+      };
+
+      if (task.status === 'done') {
+        response.download_url = task.downloadUrl;
+        response.duration_seconds = task.renderDuration;
+        response.file_size = task.fileSize;
+      } else if (task.status === 'failed') {
+        response.error = task.error;
+      }
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(response, null, 2) }],
+      };
     }
+  );
 
-    return {
-      content: [{ type: 'text', text: JSON.stringify(response, null, 2) }],
-    };
-  }
-);
+  server.tool(
+    'list_templates',
+    'List available video templates that can be used as starting points.',
+    {},
+    async () => {
+      const templates = [
+        { id: 'product-intro', name: 'Product Intro', description: 'Short product introduction with title, problem statement, and CTA', duration_range: '10-20s' },
+        { id: 'feature-announce', name: 'Feature Announcement', description: 'Announce a new feature with animated code/text reveal', duration_range: '10-15s' },
+        { id: 'social-clip', name: 'Social Media Clip', description: 'Short vertical video for TikTok/Reels/Shorts', duration_range: '5-15s', aspect: '9:16' },
+        { id: 'demo-flow', name: 'Demo Flow', description: 'Step-by-step demo showing a product flow', duration_range: '15-30s' },
+        { id: 'text-reveal', name: 'Text Reveal', description: 'Animated text reveal with transitions', duration_range: '5-10s' },
+      ];
 
-// Tool: list_templates
-server.tool(
-  'list_templates',
-  'List available video templates that can be used as starting points.',
-  {},
-  async () => {
-    const templates = [
-      { id: 'product-intro', name: 'Product Intro', description: 'Short product introduction with title, problem statement, and CTA', duration_range: '10-20s' },
-      { id: 'feature-announce', name: 'Feature Announcement', description: 'Announce a new feature with animated code/text reveal', duration_range: '10-15s' },
-      { id: 'social-clip', name: 'Social Media Clip', description: 'Short vertical video for TikTok/Reels/Shorts', duration_range: '5-15s', aspect: '9:16' },
-      { id: 'demo-flow', name: 'Demo Flow', description: 'Step-by-step demo showing a product flow', duration_range: '15-30s' },
-      { id: 'text-reveal', name: 'Text Reveal', description: 'Animated text reveal with transitions', duration_range: '5-10s' },
-    ];
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ templates }, null, 2) }],
+      };
+    }
+  );
 
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ templates }, null, 2) }],
-    };
-  }
-);
+  return server;
+}
 
 // Video processing pipeline
 async function processVideo(taskId, params) {
   const task = tasks.get(taskId);
-  
-  // Step 1: Generate composition
+
   task.status = 'generating';
   const composition = await generateComposition(params);
-  
+
   const compPath = join(COMPOSITIONS_DIR, `${taskId}.html`);
   await writeFile(compPath, composition);
-  
-  // Step 2: Render to MP4
+
   task.status = 'rendering';
   const outputPath = join(OUTPUTS_DIR, `${taskId}.mp4`);
-  
+
   const startTime = Date.now();
   await renderVideo(compPath, outputPath, params.duration, params.width, params.height);
   const renderDuration = (Date.now() - startTime) / 1000;
-  
-  // Step 3: Get file info
+
   const fileStat = await stat(outputPath);
-  
+
   task.status = 'done';
   task.downloadUrl = `/downloads/${taskId}.mp4`;
   task.renderDuration = renderDuration;
   task.fileSize = fileStat.size;
   task.outputPath = outputPath;
-  
-  // Clean up composition
+
   try { await unlink(compPath); } catch {}
 }
 
 async function generateComposition(params) {
   const { prompt, duration, width, height, style } = params;
-  
-  // Color schemes
+
   const styles = {
     dark: { bg: '#0a0a0a', text: '#fafafa', accent: '#3b82f6', sub: '#999', cardBg: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.1)' },
     light: { bg: '#fafafa', text: '#1a1a1a', accent: '#2563eb', sub: '#666', cardBg: '#fff', border: '#e5e5e5' },
     minimal: { bg: '#fff', text: '#111', accent: '#111', sub: '#888', cardBg: '#f5f5f5', border: '#ddd' },
     bold: { bg: '#000', text: '#fff', accent: '#f97316', sub: '#aaa', cardBg: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.15)' },
   };
-  
+
   const s = styles[style] || styles.dark;
   const isVertical = height > width;
   const fontSize = isVertical ? '48px' : '72px';
-  const subFontSize = isVertical ? '24px' : '36px';
-  
-  // Parse prompt into scenes (simple heuristic)
+
   const sentences = prompt.split(/[.!?]+/).filter(s => s.trim().length > 5);
   const sceneCount = Math.min(Math.max(sentences.length, 2), 5);
   const sceneDuration = duration / sceneCount;
-  
+
   let scenesHtml = '';
   let timelineCode = '';
-  
+
   for (let i = 0; i < sceneCount; i++) {
     const text = sentences[i] || (i === 0 ? prompt.split(',')[0] : '');
     const startTime = i * sceneDuration;
     const isLast = i === sceneCount - 1;
-    
+
     scenesHtml += `
       <div id="scene${i+1}" class="clip scene" data-start="${startTime.toFixed(1)}" data-duration="${sceneDuration.toFixed(1)}" data-track-index="1">
         <div class="headline">${escapeHtml(text.trim())}${isLast ? '<br><span class="accent">zenbin.org</span>' : ''}</div>
       </div>`;
-    
-    // GSAP animations
+
     timelineCode += `
       tl.from("#scene${i+1} .headline", { opacity: 0, y: 40, duration: 0.8, ease: "power2.out" }, ${startTime.toFixed(1)});`;
     if (i < sceneCount - 1) {
@@ -208,7 +216,7 @@ async function generateComposition(params) {
       tl.to("#scene${i+1} .headline", { opacity: 0, y: -20, duration: 0.5, ease: "power2.in" }, ${(startTime + sceneDuration - 0.7).toFixed(1)});`;
     }
   }
-  
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -253,26 +261,13 @@ async function renderVideo(inputPath, outputPath, duration, width, height) {
     '--height', String(height),
   ], {
     cwd: process.cwd(),
-    timeout: 300000, // 5 minute timeout
+    timeout: 300000,
   });
-  
+
   return { stdout, stderr };
 }
 
-// API Key authentication
-const API_KEY = process.env.HYPER_VIDEO_API_KEY;
-
-// Auth middleware for Express routes
-function requireApiKey(req, res, next) {
-  if (!API_KEY) return next(); // No key set = open access
-  const auth = req.headers['authorization'];
-  const key = req.headers['x-api-key'];
-  const queryKey = req.query?.apiKey;
-  if (auth === `Bearer ${API_KEY}` || key === API_KEY || queryKey === API_KEY) return next();
-  res.status(401).json({ error: 'Unauthorized. Set Authorization: Bearer <key> or X-API-Key header.' });
-}
-
-// Express server for MCP + downloads + health
+// Express app
 const app = express();
 app.use(express.json());
 
@@ -289,23 +284,92 @@ app.get('/llms.txt', (req, res) => {
 // Auth-protected downloads
 app.use('/downloads', requireApiKey, express.static(OUTPUTS_DIR));
 
-// MCP endpoint — handle requests via transport with auth
-app.post('/mcp', requireApiKey, (req, res) => {
-  transport.handleRequest(req, res, req.body);
-});
-app.get('/mcp', requireApiKey, (req, res) => {
-  transport.handleRequest(req, res);
-});
-app.delete('/mcp', requireApiKey, (req, res) => {
-  transport.handleRequest(req, res);
+// MCP POST handler
+app.post('/mcp', requireApiKey, async (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+
+  try {
+    let transport;
+
+    if (sessionId && transports[sessionId]) {
+      // Existing session
+      transport = transports[sessionId];
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      // New session
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => uuidv4(),
+      });
+
+      transport.onclose = () => {
+        const sid = transport.sessionId;
+        if (sid && transports[sid]) {
+          delete transports[sid];
+        }
+      };
+
+      const server = getServer();
+      await server.connect(transport);
+      transports[transport.sessionId] = transport;
+    } else {
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
+        id: null,
+      });
+      return;
+    }
+
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error('Error handling MCP POST:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: 'Internal server error' },
+        id: null,
+      });
+    }
+  }
 });
 
-// Connect MCP transport
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: undefined, // stateless mode
+// MCP GET handler (SSE streams)
+app.get('/mcp', requireApiKey, async (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+  if (!sessionId || !transports[sessionId]) {
+    res.status(400).send('Invalid or missing session ID');
+    return;
+  }
+
+  try {
+    const transport = transports[sessionId];
+    await transport.handleRequest(req, res);
+  } catch (error) {
+    console.error('Error handling MCP GET:', error);
+    if (!res.headersSent) {
+      res.status(500).send('Error processing SSE stream');
+    }
+  }
 });
 
-await server.connect(transport);
+// MCP DELETE handler (session termination)
+app.delete('/mcp', requireApiKey, async (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+  if (!sessionId || !transports[sessionId]) {
+    res.status(400).send('Invalid or missing session ID');
+    return;
+  }
+
+  try {
+    const transport = transports[sessionId];
+    await transport.handleRequest(req, res);
+    delete transports[sessionId];
+  } catch (error) {
+    console.error('Error handling MCP DELETE:', error);
+    if (!res.headersSent) {
+      res.status(500).send('Error processing session termination');
+    }
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -313,4 +377,20 @@ app.listen(PORT, () => {
   console.log(`hyper-video-service running on port ${PORT}`);
   console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
   console.log(`Downloads: http://localhost:${PORT}/downloads/:id.mp4`);
+  console.log(`Auth: ${API_KEY ? 'API key required' : 'Open (no key set)'}`);
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Shutting down...');
+  for (const sessionId in transports) {
+    try {
+      await transports[sessionId].close();
+      delete transports[sessionId];
+    } catch (error) {
+      console.error(`Error closing transport for session ${sessionId}:`, error);
+    }
+  }
+  console.log('Server shutdown complete');
+  process.exit(0);
 });
