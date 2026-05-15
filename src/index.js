@@ -6,6 +6,7 @@ import { mkdir, writeFile, readFile, unlink, readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { z } from 'zod';
 
 const execFileAsync = promisify(execFile);
 
@@ -38,11 +39,11 @@ Styles: "dark" (dark background, light text), "light" (white background), "minim
 Durations: 5-60 seconds. Default is 15.
 Sizes: 1920x1080 (landscape), 1080x1920 (portrait/vertical), 1080x1080 (square).`,
   {
-    prompt: { type: 'string', description: 'Description of the video to generate. Be specific about scenes, text, transitions, and style.' },
-    duration: { type: 'number', description: 'Duration in seconds (default: 15)', default: 15 },
-    width: { type: 'number', description: 'Video width in pixels (default: 1920)', default: 1920 },
-    height: { type: 'number', description: 'Video height in pixels (default: 1080)', default: 1080 },
-    style: { type: 'string', description: 'Visual style: dark, light, minimal, bold (default: dark)', default: 'dark' },
+    prompt: z.string().describe('Description of the video to generate. Be specific about scenes, text, transitions, and style.'),
+    duration: z.number().default(15).describe('Duration in seconds (default: 15)'),
+    width: z.number().default(1920).describe('Video width in pixels (default: 1920)'),
+    height: z.number().default(1080).describe('Video height in pixels (default: 1080)'),
+    style: z.enum(['dark', 'light', 'minimal', 'bold']).default('dark').describe('Visual style (default: dark)'),
   },
   async ({ prompt, duration = 15, width = 1920, height = 1080, style = 'dark' }) => {
     const taskId = uuidv4();
@@ -81,7 +82,7 @@ server.tool(
   'check_video_status',
   'Check the rendering status of a video generation task.',
   {
-    task_id: { type: 'string', description: 'The task ID returned by generate_video' },
+    task_id: z.string().describe('The task ID returned by generate_video'),
   },
   async ({ task_id }) => {
     const task = tasks.get(task_id);
