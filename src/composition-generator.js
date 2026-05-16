@@ -243,8 +243,8 @@ function generateChecklistScene(scene, s, sceneIndex) {
     const iid = `item${sceneIndex}_${i}`;
     itemsHtml += `
         <div id="${iid}" class="checklist-item" style="display:flex;align-items:center;gap:16px;padding:12px 0;opacity:0;">
-          <span class="check-icon" style="width:28px;height:28px;border-radius:50%;background:${s.accent};display:flex;align-items:center;justify-content:center;font-size:14px;color:${s.bg};font-weight:700;flex-shrink:0;">✓</span>
-          <span class="check-text" style="font-size:28px;font-weight:600;color:${s.text};">${escapeHtml(items[i])}</span>
+          <span class="check-num" style="width:36px;height:36px;border-radius:50%;background:${s.accent};display:flex;align-items:center;justify-content:center;font-size:18px;color:${s.bg};font-weight:800;flex-shrink:0;">${escapeHtml(typeof items[i] === 'string' ? String(i+1) : items[i].num)}</span>
+          <span class="check-text" style="font-size:30px;font-weight:600;color:${s.text};">${escapeHtml(typeof items[i] === "string" ? items[i] : items[i].text)}</span>
         </div>`;
     // Fly in from right with bouncy ease
     const enterT = scene.start + 0.2 + i * 0.6;
