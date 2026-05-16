@@ -8,6 +8,8 @@ import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
 import { z } from 'zod';
 
+import { generateComposition } from './composition-generator.js';
+
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 
@@ -242,77 +244,8 @@ async function processVideo(taskId, params) {
   try { await import('fs').then(f => f.promises.rmdir(compDir)); } catch {}
 }
 
-async function generateComposition(params) {
-  const { prompt, duration, width, height, style } = params;
-
-  const styles = {
-    dark: { bg: '#0a0a0a', text: '#fafafa', accent: '#3b82f6', sub: '#999', cardBg: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.1)' },
-    light: { bg: '#fafafa', text: '#1a1a1a', accent: '#2563eb', sub: '#666', cardBg: '#fff', border: '#e5e5e5' },
-    minimal: { bg: '#fff', text: '#111', accent: '#111', sub: '#888', cardBg: '#f5f5f5', border: '#ddd' },
-    bold: { bg: '#000', text: '#fff', accent: '#f97316', sub: '#aaa', cardBg: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.15)' },
-  };
-
-  const s = styles[style] || styles.dark;
-  const isVertical = height > width;
-  const fontSize = isVertical ? '48px' : '72px';
-
-  const sentences = prompt.split(/[.!?]+/).filter(s => s.trim().length > 5);
-  const sceneCount = Math.min(Math.max(sentences.length, 2), 5);
-  const sceneDuration = duration / sceneCount;
-
-  let scenesHtml = '';
-  let timelineCode = '';
-
-  for (let i = 0; i < sceneCount; i++) {
-    const text = sentences[i] || (i === 0 ? prompt.split(',')[0] : '');
-    const startTime = i * sceneDuration;
-    const isLast = i === sceneCount - 1;
-
-    scenesHtml += `
-      <div id="scene${i+1}" class="clip scene" data-start="${startTime.toFixed(1)}" data-duration="${sceneDuration.toFixed(1)}" data-track-index="1">
-        <div class="headline">${escapeHtml(text.trim())}${isLast ? '<br><span class="accent">zenbin.org</span>' : ''}</div>
-      </div>`;
-
-    timelineCode += `
-      tl.from("#scene${i+1} .headline", { opacity: 0, y: 40, duration: 0.8, ease: "power2.out" }, ${startTime.toFixed(1)});`;
-    if (i < sceneCount - 1) {
-      timelineCode += `
-      tl.to("#scene${i+1} .headline", { opacity: 0, y: -20, duration: 0.5, ease: "power2.in" }, ${(startTime + sceneDuration - 0.7).toFixed(1)});`;
-    }
-  }
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=${width}, height=${height}" />
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: ${s.bg}; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
-    #root { width: 100%; height: 100%; position: relative; }
-    .scene { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-    .headline { font-size: ${fontSize}; font-weight: 700; color: ${s.text}; letter-spacing: -0.03em; line-height: 1.2; max-width: ${isVertical ? '90%' : '75%'}; }
-    .accent { color: ${s.accent}; }
-  </style>
-</head>
-<body>
-  <div id="root" data-composition-id="main" data-start="0" data-duration="${duration}" data-width="${width}" data-height="${height}">
-    ${scenesHtml}
-  </div>
-  <script>
-    window.__timelines = window.__timelines || {};
-    const tl = gsap.timeline({ paused: true });
-    ${timelineCode}
-    window.__timelines["main"] = tl;
-  </script>
-</body>
-</html>`;
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+  // Composition generation is handled by composition-generator.js
+  // See src/composition-generator.js for the rich HTML+GSAP generator
 
 async function renderVideo(inputPath, outputPath, duration, width, height) {
   const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
